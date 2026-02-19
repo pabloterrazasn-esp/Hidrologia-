@@ -31,5 +31,4 @@ def dem_status():
 
 @app.get("/health")
 def health():
-    # Endpoint “tonto” para monitoreo
     return JSONResponse({"ok": True})

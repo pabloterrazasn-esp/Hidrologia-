@@ -87,6 +87,7 @@ def run_pipeline(req: RunRequest):
             lat=req.lat,
             lon=req.lon,
             out_dir=str(out_dir),
+            satellite=getattr(req, 'satellite', True),
         )
     except Exception as e:
         return JSONResponse({"ok": False, "error": "Fallo ejecutando pipeline", "detail": str(e)}, status_code=500)

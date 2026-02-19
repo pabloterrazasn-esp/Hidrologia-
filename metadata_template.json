@@ -1,0 +1,11 @@
+{
+  "mode": "point",
+  "input_point": { "lon": null, "lat": null },
+  "snapped_point": { "lon": null, "lat": null },
+  "snap_distance_m": null,
+  "dem_path": "",
+  "dem_resolution": "",
+  "algorithm": "D8",
+  "area_km2": null,
+  "processing_time_s": null
+}

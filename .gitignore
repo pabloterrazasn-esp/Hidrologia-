@@ -1,0 +1,21 @@
+venv/
+__pycache__/
+outputs/
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+*.aux.xml
+.DS_Store
+
+# Secrets / env
+.env
+
+# Runtime
+jobs/
+*.log
+server.log
+
+# Geo outputs
+outputs/

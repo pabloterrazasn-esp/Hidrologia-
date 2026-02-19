@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>TerraNava | Seleccionar punto del río</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    body { margin:0; font-family: system-ui, -apple-system, sans-serif; }
+    #map { height: 72vh; }
+    .panel { padding: 12px 14px; border-top: 1px solid #ddd; }
+    input { padding: 8px; width: 210px; }
+    button { padding: 9px 12px; cursor: pointer; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .ok { color: #0a7; font-weight: 600; }
+    .err { color: #c00; font-weight: 600; }
+    code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <div class="row">
+      <div>Punto seleccionado:</div>
+      <div>Lon <input id="lon" placeholder="-64.60"></div>
+      <div>Lat <input id="lat" placeholder="-21.70"></div>
+      <button id="btnRun">Generar cuenca</button>
+      <span id="msg"></span>
+    </div>
+
+    <div style="margin-top:10px;">
+      <div id="job"></div>
+      <div id="downloads"></div>
+    </div>
+  </div>
+
+<script>
+  const map = L.map('map').setView([-21.75, -64.57], 9);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  let marker = null;
+  function setPoint(lon, lat){
+    document.getElementById('lon').value = lon.toFixed(8);
+    document.getElementById('lat').value = lat.toFixed(8);
+    if(marker) map.removeLayer(marker);
+    marker = L.marker([lat, lon]).addTo(map);
+  }
+
+  map.on('click', (e) => {
+    setPoint(e.latlng.lng, e.latlng.lat);
+    document.getElementById('msg').innerHTML = '<span class="ok">✔ punto fijado</span>';
+  });
+
+  async function poll(jobId){
+    const msg = document.getElementById('msg');
+    const job = document.getElementById('job');
+    const downloads = document.getElementById('downloads');
+
+    msg.innerHTML = '⏳ Procesando…';
+    job.innerHTML = `Job: <code>${jobId}</code>`;
+    downloads.innerHTML = '';
+
+    while(true){
+      const r = await fetch(`/api/status/${jobId}`);
+      const data = await r.json();
+
+      if(data.status === "done"){
+        msg.innerHTML = `<span class="ok">✅ Listo</span> Área: <b>${data.area_km2}</b> km² (UTM ${data.utm_epsg})`;
+        const base = `/files/${jobId}`;
+        const links = [];
+        for(const f of data.files){
+          links.push(`<li><a href="${base}/${encodeURIComponent(f)}" target="_blank">${f}</a></li>`);
+        }
+        downloads.innerHTML = `<div style="margin-top:10px;"><b>Descargas</b><ul>${links.join('')}</ul></div>`;
+        return;
+      }
+      if(data.status === "error"){
+        msg.innerHTML = `<span class="err">❌ Error</span> ${data.error}`;
+        return;
+      }
+      await new Promise(res => setTimeout(res, 1500));
+    }
+  }
+
+  document.getElementById('btnRun').addEventListener('click', async () => {
+    const lon = parseFloat(document.getElementById('lon').value);
+    const lat = parseFloat(document.getElementById('lat').value);
+    const msg = document.getElementById('msg');
+
+    if(Number.isNaN(lon) || Number.isNaN(lat)){
+      msg.innerHTML = '<span class="err">Poné lon/lat válidos o hacé click en el mapa</span>';
+      return;
+    }
+
+    msg.innerHTML = '⏳ Enviando…';
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lon, lat, tag: "terranava" })
+    });
+
+    const data = await r.json();
+    if(!r.ok){
+      msg.innerHTML = `<span class="err">❌</span> ${data.detail || 'fallo'}`;
+      return;
+    }
+    await poll(data.job_id);
+  });
+
+  // punto inicial (Tarija)
+  setPoint(-64.56734070, -21.75108540);
+</script>
+</body>
+</html>

@@ -31,32 +31,40 @@ def run_all(*, dem_path: str, lat: float, lon: float, out_dir: str, satellite: b
     shutil.copyfile(dem, jobdir / "dem.tif")
     shutil.copyfile(dem, jobdir / "dem_clip.tif")
 
-    # Outlet requerido por tu river_map.py
+    # Outlet requerido por river_map
     _write_outlet_shp(jobdir, lat=lat, lon=lon)
 
-    # Ejecutar pipeline principal (tu script)
-    # MVP hack: aseguramos que exista basin_wgs84.geojson para que river_map no reviente por 'missing file'
-(jobdir / "basin_wgs84.geojson").write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+    # MVP: asegurar que exista el archivo que te está rompiendo (aunque sea placeholder)
+    (jobdir / "basin_wgs84.geojson").write_text(
+        '{"type":"FeatureCollection","features":[]}',
+        encoding="utf-8",
+    )
 
-run_river_basemap(jobdir, zoom=13, dpi=220, stream_quantile=0.92, satellite=bool(satellite))
+    # Ejecutar pipeline principal
+    run_river_basemap(
+        jobdir,
+        zoom=13,
+        dpi=220,
+        stream_quantile=0.92,
+        satellite=bool(satellite),
+    )
 
-    # Basemap opcional (solo si existe un geojson)
+    # Basemap opcional: no tumbamos si falla
     try:
-        basin_candidates = list(jobdir.glob("*basin*.geojson")) + list(jobdir.glob("*.geojson"))
-        if basin_candidates:
+        # solo intentar si existe algún geojson (aunque sea vacío)
+        if (jobdir / "basin_wgs84.geojson").exists():
             from tools.basemap_basin import run_basemap_basin_png
             run_basemap_basin_png(jobdir, zoom=13, dpi=220)
     except Exception:
-        pass  # no tumbamos
+        pass
 
-    # Empaquetar TODO lo que exista (mejor para MVP)
+    # Zip entregable
     zip_path = jobdir / "deliverable.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for p in jobdir.rglob("*"):
             if p.is_file() and p.name != "deliverable.zip":
                 z.write(p, arcname=p.relative_to(jobdir))
 
-    # Devuelve rutas de archivos (api.py los convierte a /results/<id>/archivo)
     outputs = {p.name: str(p) for p in jobdir.iterdir() if p.is_file()}
     outputs["deliverable.zip"] = str(zip_path)
     return outputs

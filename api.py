@@ -1,155 +1,35 @@
-from tools.basemap_basin import run_basemap_basin_png
-import os, json, uuid, asyncio, subprocess
+import os
 from pathlib import Path
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
-load_dotenv()
+app = FastAPI(title="TerraNava")
 
-DEM_PATH = os.environ.get("DEM_PATH")
-HYDRO_CMD = os.environ.get("HYDRO_CMD", "python hydro_backend/hydro.py")
+# (Opcional) servir /static si existe la carpeta
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-if not DEM_PATH:
-    raise RuntimeError("Falta DEM_PATH en .env")
+# Carpeta temporal (funciona en Render)
+APP_TMP = Path(os.getenv("APP_TMP", "/tmp/terranava"))
+APP_TMP.mkdir(parents=True, exist_ok=True)
 
-BASE_DIR = Path(__file__).resolve().parent
-JOBS_DIR = BASE_DIR / "jobs"
-STATIC_DIR = BASE_DIR / "static"
-
-app = FastAPI(title="TerraNava Hydro API")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-class RunReq(BaseModel):
-    lon: float
-    lat: float
-    bbox: float = 3.0
-    snap: int = 3000
-    tag: str = "terranava"
-
-def job_path(job_id: str) -> Path:
-    return JOBS_DIR / job_id
-
-def write_status(job_id: str, payload: dict):
-    p = job_path(job_id)
-    p.mkdir(parents=True, exist_ok=True)
-    (p / "status.json").write_text(json.dumps(payload, indent=2))
-
-def read_status(job_id: str) -> dict:
-    p = job_path(job_id) / "status.json"
-    if not p.exists():
-        raise HTTPException(404, "job not found")
-    return json.loads(p.read_text())
-
-def run_backend(lon: float, lat: float, bbox: float, snap: int, tag: str):
-    cmd = (
-        f'{HYDRO_CMD} run --dem "{DEM_PATH}" '
-        f'--lon {lon} --lat {lat} --bbox {bbox} --snap {snap} --tag {tag}'
-    )
-    p = subprocess.run(cmd, shell=True, text=True, capture_output=True)
-    if p.returncode != 0:
-        raise RuntimeError(p.stderr or p.stdout or "backend error")
-    return json.loads(p.stdout)
-
-def run_report_b(jobdir: Path, epsg: str):
-    # Genera report_B dentro del jobdir
-    cmd = f'python "{BASE_DIR}/tools/report_b.py" "{jobdir}" "{DEM_PATH}" "{epsg}"'
-    p = subprocess.run(cmd, shell=True, text=True, capture_output=True)
-    if p.returncode != 0:
-        raise RuntimeError(p.stderr or p.stdout or "report_B error")
-
-async def worker(job_id: str, req: RunReq):
-    try:
-        write_status(job_id, {"status":"running"})
-        meta = await asyncio.to_thread(run_backend, req.lon, req.lat, req.bbox, req.snap, req.tag)
-
-        # jobdir real viene de outputs del backend
-        jobdir = Path(meta["outputs"]["basin_wgs84_geojson"]).parent
-
-        # genera Reporte B multiparamétrico
-        await asyncio.to_thread(run_report_b, jobdir, meta["utm_epsg"])
-
-        # Satélite (opcional): PNG + GeoTIFF (no debe romper el job si falla)
-        try:
-            await asyncio.to_thread(run_satellite_png, jobdir)
-        except Exception as e:
-            print(f"SATELLITE PNG WARNING: {e}")
-
-        try:
-            await asyncio.to_thread(run_satellite_geotiff, jobdir)
-        except Exception as e:
-            print(f"SATELLITE GEOTIFF WARNING: {e}")
-
-        # Basemap tipo Google (opcional): PNG con tiles + cuenca
-        try:
-            await asyncio.to_thread(run_basemap_basin_png, jobdir, 15, 300)
-        except Exception as e:
-            print(f"BASEMAP WARNING: {e}")
-
-        # lista archivos “presentables”
-        files = []
-        for name in ["basin_wgs84.geojson", "metadata.json", "report_B.csv", "report_B.json", "satellite_s2.png"]:
-            p = jobdir / name
-            if p.exists():
-                files.append(name)
-
-        write_status(job_id, {
-            "status":"done",
-            "area_km2": meta["area_km2"],
-            "utm_epsg": meta["utm_epsg"],
-            "jobdir": str(jobdir),
-            "files": files
-        })
-
-        # guardamos también meta completo por si querés auditoría
-        (job_path(job_id) / "meta.json").write_text(json.dumps(meta, indent=2))
-
-        # guardamos puntero al jobdir para servir archivos
-        (job_path(job_id) / "jobdir.txt").write_text(str(jobdir))
-
-    except Exception as e:
-        write_status(job_id, {"status":"error", "error": str(e)})
+DEM_FILE = APP_TMP / "dem.tif"
 
 
+@app.get("/")
+def root():
+    return {"status": "TerraNava API running", "dem_exists": DEM_FILE.exists()}
 
-@app.get("/api/health")
+
+@app.get("/dem-status")
+def dem_status():
+    return {"exists": DEM_FILE.exists(), "path": str(DEM_FILE)}
+
+
+@app.get("/health")
 def health():
-    return {"ok": True}
-@app.get("/pick", response_class=HTMLResponse)
-def pick():
-    return (STATIC_DIR / "pick.html").read_text()
-
-@app.post("/api/run")
-async def api_run(req: RunReq):
-    job_id = uuid.uuid4().hex[:12]
-    write_status(job_id, {"status":"queued"})
-    asyncio.create_task(worker(job_id, req))
-    return {"job_id": job_id}
-
-@app.get("/api/status/{job_id}")
-def api_status(job_id: str):
-    return read_status(job_id)
-
-@app.get("/files/{job_id}/{filename}")
-def files(job_id: str, filename: str):
-    jd = job_path(job_id) / "jobdir.txt"
-    if not jd.exists():
-        raise HTTPException(404, "job files not ready")
-    jobdir = Path(jd.read_text().strip())
-    f = jobdir / filename
-    if not f.exists():
-        raise HTTPException(404, "file not found")
-    return FileResponse(str(f), filename=f.name)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=True, app_dir=str(BASE_DIR))
-
-
-def run_satellite_png(jobdir: Path):
-    cmd = f'python "{BASE_DIR}/tools/gee_satellite_png.py" "{jobdir}" 2024-01-01 2025-12-31 satellite_s2.png 4096'
-    p = subprocess.run(cmd, shell=True, text=True, capture_output=True)
-    if p.returncode != 0:
-        raise RuntimeError(p.stderr or p.stdout or "satellite PNG error")
+    # Endpoint “tonto” para monitoreo
+    return JSONResponse({"ok": True})

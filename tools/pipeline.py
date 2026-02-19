@@ -10,7 +10,6 @@ from tools.river_map import run_river_basemap
 
 
 def _write_outlet_shp(jobdir: Path, lat: float, lon: float) -> None:
-    # Crea outlet_wgs84.shp + .shx + .dbf + .prj (shapefile)
     p = jobdir / "outlet_wgs84.shp"
     gdf = gpd.GeoDataFrame(
         {"name": ["outlet"]},
@@ -18,6 +17,24 @@ def _write_outlet_shp(jobdir: Path, lat: float, lon: float) -> None:
         crs="EPSG:4326",
     )
     gdf.to_file(p)
+
+
+def _ensure_basin_geojson(jobdir: Path) -> Path | None:
+    """Si existe algún geojson de cuenca, lo copia/normaliza a basin_wgs84.geojson."""
+    target = jobdir / "basin_wgs84.geojson"
+    if target.exists():
+        return target
+
+    # Prioridad: nombres que contengan "basin"
+    candidates = sorted(jobdir.glob("*basin*.geojson"))
+    if not candidates:
+        candidates = sorted(jobdir.glob("*.geojson"))
+
+    if not candidates:
+        return None
+
+    shutil.copyfile(candidates[0], target)
+    return target
 
 
 def run_all(*, dem_path: str, lat: float, lon: float, out_dir: str, satellite: bool = True) -> dict:
@@ -28,32 +45,34 @@ def run_all(*, dem_path: str, lat: float, lon: float, out_dir: str, satellite: b
     if not dem.exists():
         raise RuntimeError(f"DEM no existe: {dem}")
 
-    # Copia DEM dentro del jobdir con nombres típicos (por compatibilidad)
-    # (no sabemos cuál espera river_map internamente, así que ponemos ambos)
+    # Copia DEM en el jobdir (compat)
     shutil.copyfile(dem, jobdir / "dem.tif")
     shutil.copyfile(dem, jobdir / "dem_clip.tif")
 
-    # Crear outlet shapefile para que _pick_outlet_point(jobdir) lo encuentre
+    # Outlet shapefile (tu river_map lo exige)
     _write_outlet_shp(jobdir, lat=lat, lon=lon)
 
-    # Ejecutar tu pipeline real
+    # Ejecutar pipeline principal
     run_river_basemap(jobdir, zoom=13, dpi=220, stream_quantile=0.92, satellite=bool(satellite))
 
-    # Recolectar outputs (ajusta nombres si tus scripts generan otros)
+    # Normalizar basin geojson si existe con otro nombre
+    basin_geo = _ensure_basin_geojson(jobdir)
+
+    # Basemap es OPCIONAL: solo si existe basin_geo
+    if basin_geo is not None:
+        try:
+            from tools.basemap_basin import run_basemap_basin_png
+            # Tu función actual parece aceptar (jobdir, zoom, dpi)
+            run_basemap_basin_png(jobdir, zoom=13, dpi=220)
+        except Exception:
+            # no tumbamos el run por el basemap
+            pass
+
+    # Recolectar outputs existentes
     outputs: dict[str, str] = {}
-    for cand in [
-        "satellite_basin_rivers_BLUE_STRONG.png",
-        "satellite_basin_rivers_CLASSIFIED.png",
-        "basemap_basin.png",
-        "basin_wgs84.geojson",
-        "mainstem.geojson",
-        "dem_clip.tif",
-        "dem.tif",
-        "outlet_wgs84.shp",
-    ]:
-        p = jobdir / cand
-        if p.exists():
-            outputs[cand] = str(p)
+    for p in sorted(jobdir.iterdir()):
+        if p.is_file():
+            outputs[p.name] = str(p)
 
     # Zip entregable
     zip_path = jobdir / "deliverable.zip"

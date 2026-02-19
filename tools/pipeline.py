@@ -35,7 +35,10 @@ def run_all(*, dem_path: str, lat: float, lon: float, out_dir: str, satellite: b
     _write_outlet_shp(jobdir, lat=lat, lon=lon)
 
     # Ejecutar pipeline principal (tu script)
-    run_river_basemap(jobdir, zoom=13, dpi=220, stream_quantile=0.92, satellite=bool(satellite))
+    # MVP hack: aseguramos que exista basin_wgs84.geojson para que river_map no reviente por 'missing file'
+(jobdir / "basin_wgs84.geojson").write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+
+run_river_basemap(jobdir, zoom=13, dpi=220, stream_quantile=0.92, satellite=bool(satellite))
 
     # Basemap opcional (solo si existe un geojson)
     try:

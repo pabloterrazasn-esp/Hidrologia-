@@ -11,3 +11,6 @@ shapely
 pyproj
 fiona
 matplotlib
+contextily
+xyzservices
+mercantile

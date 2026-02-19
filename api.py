@@ -25,7 +25,7 @@ DEM_FILE = SHARED_DIR / "dem.tif"
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def root():
-    return {"status": "TerraNava API running", "dem_exists": DEM_FILE.exists()}
+    return {"status": "TerraNava API running", "version": "95fe9fc", "dem_exists": DEM_FILE.exists()}
 
 
 @app.get("/dem-status")

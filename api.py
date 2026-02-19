@@ -18,10 +18,9 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
 
 # Carpeta temporal (funciona en Render)
-APP_TMP = Path(os.getenv("APP_TMP", "/tmp/terranava"))
-APP_TMP.mkdir(parents=True, exist_ok=True)
-
-DEM_FILE = APP_TMP / "dem.tif"
+SHARED_DIR = RESULTS_DIR / "_shared"
+SHARED_DIR.mkdir(parents=True, exist_ok=True)
+DEM_FILE = SHARED_DIR / "dem.tif"
 
 
 @app.api_route("/", methods=["GET", "HEAD"])

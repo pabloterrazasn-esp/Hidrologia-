@@ -19,7 +19,7 @@ APP_TMP.mkdir(parents=True, exist_ok=True)
 DEM_FILE = APP_TMP / "dem.tif"
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"status": "TerraNava API running", "dem_exists": DEM_FILE.exists()}
 
